@@ -11,7 +11,8 @@ class Bot:
 		bot.id = 0
 		bot.room = ""
 		bot.runtime = time.time()
-
+		bot.room_list = {}		
+		
 		bot.main_conn = Connection.new("Main")
 		bot.bulle_conn = Connection.new("Bulle")
 
@@ -70,6 +71,7 @@ class Bot:
 			b.read_byte()
 			bot.room = b.read_str()
 			print("Joined room : %s" % bot.room)
+		
 			threading.Thread(target = bot.terminal).start()
 
 		if ccc == Token.PLAYER_CHAT:
@@ -78,9 +80,42 @@ class Bot:
 		if ccc == Token.LOGIN_OK:
 			forum_id, username = b.read_u32(), b.read_str()
 			print("Connected with name : %s" % username)
+			bot.update_room_list()
 
 		if ccc == Token.NEW_MAP:
 			pass
+
+		if ccc == Token.CP_PROTOCOL:
+			cp_ccc = b.read_u16()
+			if cp_ccc == Token.CP_CCC_CONNECT:
+				print("Connected to community platform.")
+		
+		if ccc == Token.PLAYER_POSITION:
+			pass
+
+		if ccc == Token.GAME_MODE_LIST:
+			length = b.read_byte()
+			mode_list = []
+			for c in range(length):
+				mode_list.append(b.read_byte())
+
+			current_mode = b.read_byte()
+			b.read_byte()
+			community_id = b.read_byte()
+			mode_name = b.read_str()
+			players = b.read_str()
+			command = b.read_str()
+			args = b.read_str()
+			
+			rooms = []
+			while b.avalible():
+				room_type = b.read_byte()
+				room_community = b.read_byte()
+				room_name = b.read_str()
+				room_players = b.read_u16()
+				b.read_u16()
+				rooms.append(room_name)
+			bot.room_list[mode_name] = rooms
 
 	def heartbeat_task(bot):
 		b = ByteStream.new()
@@ -89,6 +124,12 @@ class Bot:
 		bot.bulle_conn.send(b)
 		if bot.running:
 			threading.Timer(10, bot.heartbeat_task).start()
+	
+	def update_room_list(bot):
+		mod_list = [1, 3, 8, 9, 11, 2, 10, 16]
+		for mod in mod_list:
+			bot.game_mode(mod)
+		threading.Timer(3, bot.update_room_list).start()
 
 	def change_room(bot, room_name):
 		b = ByteStream.new()
@@ -104,6 +145,12 @@ class Bot:
 		b.write_str(message)
 		b.xor_cipher(conn.fingerprint)
 		conn.send(b)
+
+	def game_mode(bot, mode):
+		b = ByteStream.new()
+		b.write_u16(Token.GAME_MODE_LIST)
+		b.write_byte(mode)
+		bot.main_conn.send(b)
 
 	def handshake(bot):
 		b = ByteStream.new()
@@ -139,7 +186,7 @@ class Bot:
 
 	def terminal(bot):
 		while 1:
-			command = raw_input('>> ')
+			command = raw_input('')
 			if command == 'exit':
 				if bot.bulle_conn.socket != None:
 					bot.bulle_conn.socket.close()
@@ -150,17 +197,23 @@ class Bot:
 				room_name = ' '.join(command.split()[1:])
 				bot.change_room(room_name)
 
+
 			if command.startswith('msg '):
 				message = ' '.join(command.split()[1:])
 				bot.send_chat(message, bot.bulle_conn)
 
-	def start(bot):
-		bot.main_conn.open_sock(Settings.HOST, Settings.PORT)
-		bot.handshake()
+	def bulle(bot):
 		while bot.running:
 			if bot.bulle_conn.socket != None:
 				bot.check_conn(bot.bulle_conn)
-			else:
+
+	
+	def start(bot):
+		bot.main_conn.open_sock(Settings.HOST, Settings.PORT)
+		bot.handshake()
+		threading.Thread(target = bot.bulle).start()
+		while bot.running:
+			if bot.main_conn.socket != None:
 				bot.check_conn(bot.main_conn)
 
 main = Bot()
